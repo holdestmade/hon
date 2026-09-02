@@ -18,9 +18,29 @@ from homeassistant.const import (
     UnitOfVolume,
     REVOLUTIONS_PER_MINUTE,
     PERCENTAGE,
-    CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    CONCENTRATION_PARTS_PER_MILLION
 )
+
+# CONCENTRATION_MICROGRAMS_PER_CUBIC_METER and CONCENTRATION_PARTS_PER_MILLION are
+# deprecated and get removed in HA Core 2027.8. Importing them emits a deprecation
+# warning, so prefer the enums and only fall back to the old constants on cores that
+# predate them (where importing them is not deprecated and warns about nothing).
+try:
+    from homeassistant.const import UnitOfDensity
+
+    MICROGRAMS_PER_CUBIC_METER = UnitOfDensity.MICROGRAMS_PER_CUBIC_METER
+except ImportError:  # HA Core < 2023.10
+    from homeassistant.const import (
+        CONCENTRATION_MICROGRAMS_PER_CUBIC_METER as MICROGRAMS_PER_CUBIC_METER,
+    )
+
+try:
+    from homeassistant.const import UnitOfRatio
+
+    PARTS_PER_MILLION = UnitOfRatio.PARTS_PER_MILLION
+except ImportError:  # HA Core < 2026.7
+    from homeassistant.const import (
+        CONCENTRATION_PARTS_PER_MILLION as PARTS_PER_MILLION,
+    )
 
 from homeassistant.config_entries import ConfigEntry
 
@@ -339,7 +359,7 @@ class HonBaseIndoorPM2p5(HonBaseSensorEntity):
 
         self._attr_device_class = SensorDeviceClass.PM25
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = CONCENTRATION_MICROGRAMS_PER_CUBIC_METER
+        self._attr_native_unit_of_measurement = MICROGRAMS_PER_CUBIC_METER
         self._attr_icon = "mdi:blur"
 
 
@@ -349,7 +369,7 @@ class HonBaseIndoorPM10(HonBaseSensorEntity):
 
         self._attr_device_class = SensorDeviceClass.PM10
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = CONCENTRATION_MICROGRAMS_PER_CUBIC_METER
+        self._attr_native_unit_of_measurement = MICROGRAMS_PER_CUBIC_METER
         self._attr_icon = "mdi:blur"
 
 
@@ -371,7 +391,7 @@ class HonBaseCOlevel(HonBaseSensorEntity):
 
         self._attr_device_class = SensorDeviceClass.CO2
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = CONCENTRATION_PARTS_PER_MILLION
+        self._attr_native_unit_of_measurement = PARTS_PER_MILLION
         self._attr_icon = "mdi:molecule-co2"
 
 
