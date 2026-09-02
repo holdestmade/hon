@@ -29,6 +29,11 @@ from .const import (
 # CIAM access tokens expire after ~15 minutes, so refresh well before that.
 SESSION_TIMEOUT     = 600 # seconds
 
+# Back-off between failed logins. Without it a refusal from the cloud turns into
+# one full credential submission per coordinator poll (every 60s, indefinitely),
+# which is both useless and a good way to get an account rate-limited.
+AUTH_RETRY_BACKOFF  = (60, 120, 300, 600, 900) # seconds
+
 from .base import HonBaseCoordinator
 
 
@@ -51,8 +56,10 @@ class HonConnection:
             self._refresh_token = entry.data.get(CONF_REFRESH_TOKEN, "")
             self._cognitoToken = entry.data.get(CONF_COGNITO_TOKEN, "")
 
-        self._start_time    = time.time()
-        self._auth_lock     = asyncio.Lock()
+        self._start_time        = time.time()
+        self._auth_lock         = asyncio.Lock()
+        self._auth_failures     = 0
+        self._next_auth_attempt = 0.0
 
         self._header = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
@@ -90,26 +97,49 @@ class HonConnection:
 
 
     async def _ensure_session(self):
-        """Re-authenticate when the CIAM tokens are close to expiring (~15 min TTL).
+        """Refresh the CIAM tokens when they are close to expiring (~15 min TTL).
+
+        Only the tokens are renewed here. The appliance list is loaded once at
+        setup: folding it into the refresh meant any failure reading it -- a
+        cloud-side outage, say -- marked the whole session invalid, so the next
+        poll logged in again, and so did every poll after that.
 
         Every coordinator polls on its own schedule, so without the lock a
-        multi-appliance account fires one full login per appliance the moment the
+        multi-appliance account fires one login per appliance the moment the
         token ages out. The second check inside the lock lets the tasks that
         queued behind the winner reuse the tokens it just fetched.
         """
         if time.time() - self._start_time <= SESSION_TIMEOUT:
-            return
+            return True
+
         async with self._auth_lock:
-            if time.time() - self._start_time > SESSION_TIMEOUT:
-                await self.async_authorize()
+            now = time.time()
+            if now - self._start_time <= SESSION_TIMEOUT:
+                return True
+            if now < self._next_auth_attempt:
+                return False
+            return await self._async_login()
+
+    def _auth_failed(self):
+        """Record a failed login and schedule the next attempt."""
+        delay = AUTH_RETRY_BACKOFF[min(self._auth_failures, len(AUTH_RETRY_BACKOFF) - 1)]
+        self._auth_failures += 1
+        self._next_auth_attempt = time.time() + delay
+        _LOGGER.debug("Login failed %s time(s), next attempt in %ss",
+                      self._auth_failures, delay)
+        return False
 
     async def async_authorize(self):
-        """Authenticate against the hOn CIAM endpoint and load the appliances.
+        """Log in and load the appliance list. Used at setup and reconfiguration."""
+        if not await self._async_login():
+            return False
+        return await self.async_load_appliances()
+
+    async def _async_login(self):
+        """Obtain CIAM tokens.
 
         Replaces the legacy Salesforce Aura / OAuth2 login that Haier retired in
-        2026-06: the app now logs in through /ciam/authorize + /ciam/token (PKCE)
-        and reads appliances from /unified-api/v1/view/appliance-list. The old
-        /commands/v1/appliance endpoint now returns an empty list.
+        2026-06: the app now logs in through /ciam/authorize + /ciam/token (PKCE).
         """
         # PKCE (S256) verifier + challenge
         code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()
@@ -126,11 +156,11 @@ class HonConnection:
         async with self._session.get(f"{API_URL}/ciam/authorize", params=params) as resp:
             if resp.status != 200:
                 _LOGGER.error("Unable to connect to the CIAM authorize service: %s", resp.status)
-                return False
+                return self._auth_failed()
             session_id = (await resp.json()).get("session_id")
             if not session_id:
                 _LOGGER.error("Unable to get [session_id] - check your email/password")
-                return False
+                return self._auth_failed()
 
         # 2) Exchange the session id (+ PKCE verifier) for the tokens
         async with self._session.post(
@@ -144,36 +174,58 @@ class HonConnection:
                 self._refresh_token = tokens.get("refresh_token", "")
             except (KeyError, TypeError):
                 _LOGGER.error("Unable to get tokens from /ciam/token. Response: %s", await resp.text())
-                return False
+                return self._auth_failed()
 
-        # 3) Load the appliance list from the unified-api view
+        self._start_time = time.time()
+        self._auth_failures = 0
+        self._next_auth_attempt = 0.0
+        return True
+
+    async def async_load_appliances(self):
+        """Read the account's appliances from the unified-api view.
+
+        Called once per setup: the old /commands/v1/appliance endpoint now
+        returns an empty list.
+        """
         url = f"{API_URL}/unified-api/v1/view/appliance-list"
         async with self._session.post(url, headers=self._headers, json={"deviceId": "homeassistant"}) as resp:
             try:
-                json_data = await resp.json()
-                self._appliances = json_data["modules"]["applianceList"]["payload"]["appliances"]
-            except (KeyError, TypeError):
-                _LOGGER.error("hOn Invalid Data [%s] after POST [%s]", (await resp.text())[:500], url)
+                json_data = await resp.json(content_type=None)
+            except ValueError:  # not JSON at all (gateway error page, empty body)
+                _LOGGER.error("hOn appliance list: unreadable response [%s] from [%s]",
+                              (await resp.text())[:300], url)
                 return False
 
-            _LOGGER.debug(f"All appliances: {self._appliances}")
+            module = (json_data or {}).get("modules", {}).get("applianceList", {})
+            appliances = module.get("payload", {}).get("appliances")
+
+            if appliances is None:
+                # The cloud answers 200 with the failure nested in the module, so
+                # surface its own message rather than dumping the raw envelope.
+                _LOGGER.error(
+                    "hOn appliance list unavailable (HTTP %s): %s [%s]. This is "
+                    "reported by the hOn cloud, not by Home Assistant; if it "
+                    "persists check https://github.com/gvigroux/hon/issues",
+                    resp.status,
+                    module.get("message") or (await resp.text())[:300],
+                    module.get("code", "unknown"),
+                )
+                return False
+
+            _LOGGER.debug("All appliances: %s", appliances)
 
             # Keep only appliances carrying the fields every entity needs to
             # identify itself; a partial payload would otherwise take the whole
             # account down when the coordinator is built.
             required = ("macAddress", "applianceTypeId", "applianceTypeName")
             usable, skipped = [], []
-            for appliance in self._appliances:
-                if all(field in appliance for field in required):
-                    usable.append(appliance)
-                else:
-                    skipped.append(appliance)
+            for appliance in appliances:
+                (usable if all(f in appliance for f in required) else skipped).append(appliance)
             if skipped:
                 _LOGGER.warning("Ignoring %s appliance(s) with incomplete data: %s",
                                 len(skipped), skipped)
             self._appliances = usable
 
-        self._start_time = time.time()
         return True
 
 
