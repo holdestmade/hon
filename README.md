@@ -2,6 +2,8 @@
 
 Home Assistant component supporting all devices integrated with hOn cloud.
 
+Based on the work from https://github.com/gvigroux/hon
+
 ## pre-requisite
 Your appliances must be controlled by the hOn mobile application
 supported device: Haier Climate tested
