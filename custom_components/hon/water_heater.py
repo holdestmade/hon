@@ -6,7 +6,7 @@ from datetime import datetime
 from homeassistant.core import callback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, STATE_OFF, UnitOfTemperature, PRECISION_WHOLE
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from homeassistant.components.water_heater import (
@@ -14,6 +14,7 @@ from homeassistant.components.water_heater import (
     WaterHeaterEntityFeature,
 )
 
+from .base import HonDeviceInfoMixin
 from .const import DOMAIN, APPLIANCE_TYPE
 from .parameter import HonParameterRange
 
@@ -33,7 +34,7 @@ MACHMODE_TO_MODE = {machmode: name for name, (machmode, _prog) in WH_MODES.items
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
 
-    hon = hass.data[DOMAIN][entry.unique_id]
+    hon = hass.data[DOMAIN][entry.entry_id]
 
     appliances = []
     for appliance in hon.appliances:
@@ -44,7 +45,7 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
     async_add_entities(appliances)
 
 
-class HonWaterHeaterEntity(CoordinatorEntity, WaterHeaterEntity):
+class HonWaterHeaterEntity(HonDeviceInfoMixin, CoordinatorEntity, WaterHeaterEntity):
     def __init__(self, hass, coordinator, entry, appliance) -> None:
         super().__init__(coordinator)
         self._coordinator   = coordinator
@@ -92,13 +93,9 @@ class HonWaterHeaterEntity(CoordinatorEntity, WaterHeaterEntity):
         """Suppress coordinator overwrites briefly so optimistic state sticks."""
         if self._watcher is not None:
             self._watcher()
-        self._watcher = async_track_time_interval(
-            self._hass, self._clear_watcher, delay
-        )
+        self._watcher = async_call_later(self._hass, delay, self._clear_watcher)
 
     async def _clear_watcher(self, now: Optional[datetime] = None) -> None:
-        if self._watcher is not None:
-            self._watcher()
         self._watcher = None
         await self._coordinator.async_request_refresh()
 
@@ -121,8 +118,6 @@ class HonWaterHeaterEntity(CoordinatorEntity, WaterHeaterEntity):
     def _handle_coordinator_update(self) -> None:
         # Watcher running: data may still reflect the pre-command state
         if self._watcher is not None:
-            return
-        if self._coordinator.data is False:
             return
         self._update_from_device()
 
@@ -178,13 +173,3 @@ class HonWaterHeaterEntity(CoordinatorEntity, WaterHeaterEntity):
     @property
     def name(self) -> str:
         return self._name
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._mac, self._type_name)},
-            "name": self._name,
-            "manufacturer": self._brand,
-            "model": self._model,
-            "sw_version": self._fw_version,
-        }

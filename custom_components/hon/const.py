@@ -1,16 +1,14 @@
 """hOn component constants."""
 
-from enum import Enum, IntEnum
+from enum import IntEnum
+
+from homeassistant.const import Platform
 from homeassistant.components.climate.const import (
     FAN_OFF,
     FAN_AUTO,
     FAN_LOW,
     FAN_MEDIUM,
     FAN_HIGH,
-    SWING_OFF,
-    SWING_BOTH,
-    SWING_VERTICAL,
-    SWING_HORIZONTAL,
     HVACMode,
 )
 
@@ -23,16 +21,13 @@ CONF_REFRESH_TOKEN = "refresh_token"
 CONF_FRAMEWORK = "framework"
 
 PLATFORMS = [
-    "climate",
-    "water_heater",
-    "sensor",
-    "binary_sensor",
-    "button",
-    "switch"
+    Platform.CLIMATE,
+    Platform.WATER_HEATER,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SWITCH,
 ]
-
-"""     "number",
-    "select", """
 
 
 AUTH_API        = "https://account2.hon-smarthome.com/SmartHome"
@@ -45,32 +40,32 @@ DEVICE_MODEL    = "exynos9820"
 
 
 class APPLIANCE_TYPE(IntEnum):
-    WASHING_MACHINE = 1,
-    WASH_DRYER      = 2,
-    OVEN            = 4,
-    WATER_HEATER    = 10,
-    WINE_COOLER     = 6,
-    PURIFIER        = 7,
-    TUMBLE_DRYER    = 8,
-    DISH_WASHER     = 9,
-    CLIMATE         = 11,
-    FRIDGE          = 14,
-    TV              = 25,
+    WASHING_MACHINE = 1
+    WASH_DRYER      = 2
+    OVEN            = 4
+    WINE_COOLER     = 6
+    PURIFIER        = 7
+    TUMBLE_DRYER    = 8
+    DISH_WASHER     = 9
+    WATER_HEATER    = 10
+    CLIMATE         = 11
+    FRIDGE          = 14
+    TV              = 25
     AIR_TO_WATER    = 27
 
 APPLIANCE_DEFAULT_NAME = {
-    "1": "Washing Machine",
-    "2": "Wash Dryer",
-    "4": "Oven",
-    "10": "Water Heater",
-    "6": "Wine Cooler",
-    "7": "Purifier",
-    "8": "Tumble Dryer",
-    "9": "Dish Washer",
-    "11": "Climate",
-    "14": "Fridge",
-    "25": "TV",
-    "27": "Air to Water",
+    str(APPLIANCE_TYPE.WASHING_MACHINE.value):    "Washing Machine",
+    str(APPLIANCE_TYPE.WASH_DRYER.value):         "Wash Dryer",
+    str(APPLIANCE_TYPE.OVEN.value):               "Oven",
+    str(APPLIANCE_TYPE.WINE_COOLER.value):        "Wine Cooler",
+    str(APPLIANCE_TYPE.PURIFIER.value):           "Purifier",
+    str(APPLIANCE_TYPE.TUMBLE_DRYER.value):       "Tumble Dryer",
+    str(APPLIANCE_TYPE.DISH_WASHER.value):        "Dish Washer",
+    str(APPLIANCE_TYPE.WATER_HEATER.value):       "Water Heater",
+    str(APPLIANCE_TYPE.CLIMATE.value):            "Climate",
+    str(APPLIANCE_TYPE.FRIDGE.value):             "Fridge",
+    str(APPLIANCE_TYPE.TV.value):                 "TV",
+    str(APPLIANCE_TYPE.AIR_TO_WATER.value):       "Air to Water",
 }
 
 CLIMATE_FAN_MODE = {

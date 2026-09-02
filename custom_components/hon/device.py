@@ -1,14 +1,14 @@
 import logging
 
-from homeassistant.helpers.update_coordinator import (DataUpdateCoordinator,CoordinatorEntity)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, APPLIANCE_DEFAULT_NAME
+from .base import HonDeviceInfoMixin, appliance_name
 from .command import HonCommand
-from .parameter import HonParameterFixed, HonParameterEnum
+from .parameter import HonParameterFixed
 
 _LOGGER = logging.getLogger(__name__)
 
-class HonDevice(CoordinatorEntity):
+class HonDevice(HonDeviceInfoMixin, CoordinatorEntity):
     def __init__(self, hon, coordinator, appliance) -> None:
         super().__init__(coordinator)
 
@@ -18,7 +18,7 @@ class HonDevice(CoordinatorEntity):
         self._brand         = appliance["brand"]
         self._type_name     = appliance["applianceTypeName"]
         self._type_id       = appliance["applianceTypeId"]
-        self._name          = appliance.get("nickName", APPLIANCE_DEFAULT_NAME.get(str(self._type_id), "Device ID: " + str(self._type_id)))
+        self._name          = appliance_name(appliance)
         self._mac           = appliance["macAddress"]
         self._model         = appliance["modelName"]
         self._series        = appliance.get("series", "")
@@ -68,61 +68,42 @@ class HonDevice(CoordinatorEntity):
     def getFloat(self, item):
         return float(self.get(item,0))
 
-    def has(self, item, default=None):
-        return self.get(item) != None
+    def has(self, item):
+        return self.get(item) is not None
+
+    @staticmethod
+    def _short_program_name(program_name):
+        """PROGRAMS.WM.COTTON -> cotton; anything else is returned lowercased."""
+        name = program_name.lower()
+        parts = name.split(".")
+        return parts[2] if len(parts) == 3 else name
 
     def getProgramName(self):
+        """Return the running program, looked up in the three places hOn puts it."""
         try:
-            # Önce activity.attributes içinde ara
-            activity = self._attributes.get("activity", {})
-            if activity:
-                program_name = activity.get("attributes", {}).get("programName")
+            candidates = (
+                ("activity.attributes",
+                 self._attributes.get("activity", {}).get("attributes", {}).get("programName")),
+                ("attributes",
+                 self._attributes.get("programName")),
+                ("commandHistory",
+                 self._attributes.get("commandHistory", {}).get("command", {}).get("programName")),
+            )
+
+            for source, program_name in candidates:
                 if program_name:
-                    _LOGGER.debug(f"[{self._name}] Found program name in activity.attributes: {program_name}")
-                    name = program_name.lower()
-                    parts = name.split('.')
-                    if len(parts) == 3:
-                        return parts[2]
-                    return name
-            
-            # Sonra direkt attributes içinde ara
-            program_name = self._attributes.get("programName")
-            if program_name:
-                _LOGGER.debug(f"[{self._name}] Found program name in attributes: {program_name}")
-                name = program_name.lower()
-                parts = name.split('.')
-                if len(parts) == 3:
-                    return parts[2]
-                return name
-            
-            # Sonra commandHistory içinde ara
-            command_history = self._attributes.get("commandHistory", {})
-            if command_history:
-                command = command_history.get("command", {})
-                program_name = command.get("programName")
-                if program_name:
-                    _LOGGER.debug(f"[{self._name}] Found program name in commandHistory: {program_name}")
-                    name = program_name.lower()
-                    parts = name.split('.')
-                    if len(parts) == 3:
-                        return parts[2]
-                    return name
-            
-            _LOGGER.debug(f"[{self._name}] Program name not found in any location")
-                
-        except Exception as e:
-            _LOGGER.warning(f"[{self._name}] Failed to get program name: {e}")
-        
+                    _LOGGER.debug(
+                        "[%s] Found program name in %s: %s", self._name, source, program_name
+                    )
+                    return self._short_program_name(program_name)
+
+            _LOGGER.debug("[%s] Program name not found in any location", self._name)
+
+        except (AttributeError, TypeError) as err:
+            _LOGGER.debug("[%s] Failed to get program name: %s", self._name, err)
+
         return None
 
-    """    
-    async def load_context(self):
-        data = await self._hon.async_get_context(self)
-        #_LOGGER.warning(data)
-        self._attributes = data
-        for name, values in self._attributes.pop("shadow", {'NA': 0}).get("parameters").items():
-            self._attributes.setdefault("parameters", {})[name] = values["parNewVal"]
-    """
     async def load_context(self):
         data = await self._hon.async_get_context(self)
         self._attributes = data or {}
@@ -196,18 +177,6 @@ class HonDevice(CoordinatorEntity):
                 result.setdefault(name, {})[key] = parameter.value
         return result
         
-    """ 
-    def update_command(self, command, parameters):
-        for key in command.parameters.keys():
-            if( key in parameters 
-                and command.parameters.get(key).value != parameters.get(key) 
-                and not isinstance(command.parameters.get(key), HonParameterFixed)):
-
-                if( isinstance(command.parameters.get(key), HonParameterEnum) and parameters.get(key) not in command.parameters.get(key).values): 
-                    _LOGGER.warning(f"Unable to update parameter [{key}] with value [{parameters.get(key)}] because not in range {command.parameters.get(key).values}. Use default instead.")
-                else:
-                    command.parameters.get(key).value = parameters.get(key) """
-
     def update_command(self, command, parameters):
         for key in command.parameters.keys():
             param = command.parameters.get(key)
@@ -225,7 +194,7 @@ class HonDevice(CoordinatorEntity):
             except Exception as e:
                 _LOGGER.warning("Update_command: Invalid %s=%s (%s)", key, new_val, e)
 
-                # 👉 fallback intelligent
+                # Fall back to the parameter's own default
                 if hasattr(param, "default"):
                     try:
                         param.value = param.default
@@ -312,15 +281,3 @@ class HonDevice(CoordinatorEntity):
 
     async def load_statistics(self):
         self._statistics = await self._hon.load_statistics(self)
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {
-                (DOMAIN, self._mac, self._type_name)
-            },
-            "name": self._name,
-            "manufacturer": self._brand,
-            "model": self._model,
-            "sw_version": self._fw_version,
-        }

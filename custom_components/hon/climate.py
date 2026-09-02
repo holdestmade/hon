@@ -1,71 +1,44 @@
 import logging
-import asyncio
-import json
 import voluptuous as vol
 from datetime import datetime, timedelta
 from typing import Optional
-from enum import IntEnum
-from decimal import Decimal
 
 from homeassistant.components.climate import (
     ClimateEntity,
 )
 
 from homeassistant.helpers.update_coordinator import (
-    DataUpdateCoordinator,
     CoordinatorEntity,
 )
 
-from homeassistant.components.sensor import (
-    SensorEntity,
-    SensorDeviceClass,
-    SensorStateClass,
-    SensorEntityDescription,
-)
-
-
 from homeassistant.components.climate.const import (
-
-    FAN_ON,
     FAN_OFF,
-    FAN_AUTO,
-    FAN_LOW,
     FAN_MEDIUM,
-    FAN_HIGH,
-    FAN_TOP,
-    FAN_MIDDLE,
-    FAN_FOCUS,
-    FAN_DIFFUSE,
-    SWING_ON,
     SWING_OFF,
     SWING_BOTH,
     SWING_VERTICAL,
     SWING_HORIZONTAL,
     ClimateEntityFeature,
-    HVACAction,
     HVACMode,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_TEMPERATURE,
-    PRECISION_TENTHS,
     PRECISION_WHOLE,
-    STATE_OFF,
-    STATE_ON,
     UnitOfTemperature,
 )
 from homeassistant.core import callback
-from homeassistant.helpers.dispatcher   import async_dispatcher_connect
 from homeassistant.helpers.event        import async_call_later
 from homeassistant.helpers              import config_validation as cv, entity_platform
 from .const import(
-    DOMAIN, 
+    DOMAIN,
+    APPLIANCE_TYPE,
     CLIMATE_FAN_MODE,
     CLIMATE_HVAC_MODE,
     ClimateSwingHorizontal,
-    ClimateSwingVertical,
-    ClimateEcoPilotMode)
+    ClimateSwingVertical)
 
+from .base import HonDeviceInfoMixin
 from .parameter import ( HonParameterRange )
 
 
@@ -75,13 +48,12 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
 
-    hon = hass.data[DOMAIN][entry.unique_id]
+    hon = hass.data[DOMAIN][entry.entry_id]
 
     appliances = []
     for appliance in hon.appliances:
-        if appliance['applianceTypeId'] == 11:
+        if appliance['applianceTypeId'] == APPLIANCE_TYPE.CLIMATE:
             coordinator = await hon.async_get_coordinator(appliance)
-            await coordinator.async_config_entry_first_refresh()
             appliances.append(HonClimateEntity(hass, coordinator, entry, appliance))
 
     async_add_entities(appliances)
@@ -154,20 +126,20 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
 
 
 # function to return key for any value
-def get_key(dictionary,val,default):
+def get_key(dictionary, val, default):
     for key, value in dictionary.items():
         if val == value:
             return key
-    _LOGGER.warning(f"Value {value} is not in dictionary {dictionary}")
+    _LOGGER.debug("Value %s is not in dictionary %s", val, dictionary)
     return default
 
 
 
-class HonClimateEntity(CoordinatorEntity, ClimateEntity):
+class HonClimateEntity(HonDeviceInfoMixin, CoordinatorEntity, ClimateEntity):
     def __init__(self,hass, coordinator, entry, appliance) -> None:
         super().__init__(coordinator)
         self._coordinator   = coordinator
-        self._hon           = hass.data[DOMAIN][entry.unique_id]
+        self._hon           = hass.data[DOMAIN][entry.entry_id]
         self._hass          = hass
         self._brand         = appliance['brand']
         self._mac           = appliance['macAddress']
@@ -178,7 +150,7 @@ class HonClimateEntity(CoordinatorEntity, ClimateEntity):
         self._modelId       = appliance['applianceModelId']
         self._type_name     = appliance['applianceTypeName']
         self._serialNumber  = appliance['serialNumber']
-        self._fwVersion     = appliance['fwVersion']
+        self._fw_version    = appliance['fwVersion']
         self._unique_id     = f"{self._mac}"
         self._available     = True
         self._watcher       = None
@@ -321,19 +293,6 @@ class HonClimateEntity(CoordinatorEntity, ClimateEntity):
         return self._available
 
     @property
-    def device_info(self):
-        return {
-            "identifiers": {
-                # Serial numbers are unique identifiers within a specific domain
-                (DOMAIN, self._mac, self._type_name)
-            },
-            "name": self._name,
-            "manufacturer": self._brand,
-            "model": self._model,
-            "sw_version": self._fwVersion
-        }
-
-    @property
     def state_attributes(self):
         """Return the climate state attributes."""
         attr = super().state_attributes
@@ -358,8 +317,6 @@ class HonClimateEntity(CoordinatorEntity, ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
-        command = {}
-
         if hvac_mode == HVACMode.OFF:
             await self._device.stop_command().send()
         elif hvac_mode == HVACMode.COOL:

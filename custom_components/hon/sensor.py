@@ -1,12 +1,9 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from homeassistant.core import callback
 from homeassistant.components.sensor import (
-    SensorEntity,
     SensorDeviceClass,
     SensorStateClass,
-    SensorEntityDescription,
 )
 
 from homeassistant.const import (
@@ -18,22 +15,40 @@ from homeassistant.const import (
     UnitOfVolume,
     REVOLUTIONS_PER_MINUTE,
     PERCENTAGE,
-    CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    CONCENTRATION_PARTS_PER_MILLION
 )
+
+# CONCENTRATION_MICROGRAMS_PER_CUBIC_METER and CONCENTRATION_PARTS_PER_MILLION are
+# deprecated and get removed in HA Core 2027.8. Importing them emits a deprecation
+# warning, so prefer the enums and only fall back to the old constants on cores that
+# predate them (where importing them is not deprecated and warns about nothing).
+try:
+    from homeassistant.const import UnitOfDensity
+
+    MICROGRAMS_PER_CUBIC_METER = UnitOfDensity.MICROGRAMS_PER_CUBIC_METER
+except ImportError:  # HA Core < 2023.10
+    from homeassistant.const import (
+        CONCENTRATION_MICROGRAMS_PER_CUBIC_METER as MICROGRAMS_PER_CUBIC_METER,
+    )
+
+try:
+    from homeassistant.const import UnitOfRatio
+
+    PARTS_PER_MILLION = UnitOfRatio.PARTS_PER_MILLION
+except ImportError:  # HA Core < 2026.7
+    from homeassistant.const import (
+        CONCENTRATION_PARTS_PER_MILLION as PARTS_PER_MILLION,
+    )
 
 from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN, APPLIANCE_TYPE
-from .base import HonBaseCoordinator, HonBaseSensorEntity
-
-divider = 1.0
+from .base import HonBaseSensorEntity
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
 
-    hon = hass.data[DOMAIN][entry.unique_id]
+    hon = hass.data[DOMAIN][entry.entry_id]
 
     appliances = []
     for appliance in hon.appliances:
@@ -41,21 +56,15 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
         coordinator = await hon.async_get_coordinator(appliance)
         device = coordinator.device
 
-        # DEBUG: Tüm verileri logla
-        _LOGGER.debug(f"=== Checking device: {device.name} ===")
-        _LOGGER.debug(f"Device type: {device._type_name}")
-        _LOGGER.debug(f"All attributes keys: {list(device.attributes.keys())}")
-        
-        if 'commandHistory' in device.attributes:
-            _LOGGER.debug(f"Command History content: {device.attributes['commandHistory']}")
-        
-        # Program name sensörünü her cihaz için ekle (debug için)
-        programName = device.getProgramName()
-        _LOGGER.debug(f"getProgramName() result: {programName}")
-        
-        # Program name sensörünü ekle (değer None olsa bile)
+        _LOGGER.debug(
+            "Checking device %s (type %s), attributes: %s",
+            device.name, device.appliance_type, list(device.attributes),
+        )
+
+        # Kept unconditional: the program name is only readable while a program
+        # runs, so gating on it would make the sensor come and go between
+        # restarts and orphan it in existing dashboards.
         appliances.extend([HonBaseProgramName(hass, coordinator, entry, appliance)])
-        _LOGGER.debug(f"Program name sensor added for {device.name}")
 
         if device.has("machMode"):
             appliances.extend([HonBaseMode(hass, coordinator, entry, appliance)])
@@ -205,8 +214,6 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
         if device.get("statistics.programsCounter") is not None:
             appliances.extend([HonBaseProgramsCounter(hass, coordinator, entry, appliance)])
 
-        await coordinator.async_request_refresh()
-
     async_add_entities(appliances)
 
 
@@ -255,19 +262,11 @@ class HonBaseProgramName(HonBaseSensorEntity):
         self._attr_icon = "mdi:playlist-play"
 
     def coordinator_update(self):
-        _LOGGER.debug(f"[{self._name}] All attributes: {self._device.attributes}")
-        
         program_name = self._device.getProgramName()
-        _LOGGER.debug(f"[{self._name}] getProgramName() returned: {program_name}")
-        
-        if program_name:
-            self._attr_native_value = program_name
-            self._attr_available = True
-            _LOGGER.debug(f"[{self._name}] Program name set to: {program_name}")
-        else:
-            self._attr_native_value = "No program"
-            self._attr_available = True
-            _LOGGER.debug(f"[{self._name}] Program name set to: No program")
+        _LOGGER.debug("[%s] Program name: %s", self._name, program_name)
+
+        self._attr_native_value = program_name or "No program"
+        self._attr_available = True
 
 
 class HonBaseTemperature(HonBaseSensorEntity):
@@ -339,7 +338,7 @@ class HonBaseIndoorPM2p5(HonBaseSensorEntity):
 
         self._attr_device_class = SensorDeviceClass.PM25
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = CONCENTRATION_MICROGRAMS_PER_CUBIC_METER
+        self._attr_native_unit_of_measurement = MICROGRAMS_PER_CUBIC_METER
         self._attr_icon = "mdi:blur"
 
 
@@ -349,7 +348,7 @@ class HonBaseIndoorPM10(HonBaseSensorEntity):
 
         self._attr_device_class = SensorDeviceClass.PM10
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = CONCENTRATION_MICROGRAMS_PER_CUBIC_METER
+        self._attr_native_unit_of_measurement = MICROGRAMS_PER_CUBIC_METER
         self._attr_icon = "mdi:blur"
 
 
@@ -369,10 +368,10 @@ class HonBaseCOlevel(HonBaseSensorEntity):
     def __init__(self, hass, coordinator, entry, appliance) -> None:
         super().__init__(coordinator, appliance, "coLevel", "CO level")
 
-        self._attr_device_class = SensorDeviceClass.CO2
+        self._attr_device_class = SensorDeviceClass.CO
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = CONCENTRATION_PARTS_PER_MILLION
-        self._attr_icon = "mdi:molecule-co2"
+        self._attr_native_unit_of_measurement = PARTS_PER_MILLION
+        self._attr_icon = "mdi:molecule-co"
 
 
 class HonBaseAIRquality(HonBaseSensorEntity):
@@ -594,7 +593,7 @@ class HonBaseTotalWaterUsed(HonBaseSensorEntity):
         self._attr_icon = "mdi:water-pump"
 
     def coordinator_update(self):
-        self._attr_native_value = self._device.getFloat("totalWaterUsed") / divider
+        self._attr_native_value = self._device.getFloat("totalWaterUsed")
 
 
 class HonBaseWeight(HonBaseSensorEntity):
@@ -620,7 +619,7 @@ class HonBaseCurrentWaterUsed(HonBaseSensorEntity):
 
     def coordinator_update(self):
         #self._attr_native_value = self._device.get("currentWaterUsed")
-        self._attr_native_value = self._device.getFloat("currentWaterUsed") / divider
+        self._attr_native_value = self._device.getFloat("currentWaterUsed")
 
 
 class HonBaseError(HonBaseSensorEntity):
@@ -652,7 +651,7 @@ class HonBaseCurrentElectricityUsed(HonBaseSensorEntity):
 
     def coordinator_update(self):
         #self._attr_native_value = self._device.get("currentElectricityUsed")
-        self._attr_native_value = self._device.getFloat("currentElectricityUsed") / divider
+        self._attr_native_value = self._device.getFloat("currentElectricityUsed")
 
 
 class HonBaseSpinSpeed(HonBaseSensorEntity):

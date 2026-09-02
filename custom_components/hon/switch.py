@@ -4,14 +4,13 @@ from typing import Any
 
 
 from .const import DOMAIN
-from .device import HonDevice
-from .parameter import HonParameter, HonParameterFixed, HonParameterEnum, HonParameterRange, HonParameterProgram
-from .base import HonBaseCoordinator, HonBaseSwitchEntity
+from .parameter import HonParameter, HonParameterRange
+from .base import HonBaseSwitchEntity
 
 
 from homeassistant.core import callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.components.switch import SwitchEntityDescription, SwitchEntity
+from homeassistant.components.switch import SwitchEntityDescription
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,132 +26,87 @@ class HonSwitchEntityDescription(SwitchEntityDescription):
 
 
 
+SWITCH_DESCRIPTIONS = (
+    (HonSwitchEntityDescription(
+        key="silentSleepStatus",
+        name="Sleep Mode",
+        icon="mdi:bed",
+        translation_key="sleep_mode",
+    ), False),
+    (HonSwitchEntityDescription(
+        key="screenDisplayStatus",
+        name="Screen Display",
+        icon="mdi:monitor-small",
+        translation_key="screen_display_status",
+    ), False),
+    (HonSwitchEntityDescription(
+        key="muteStatus",
+        name="Silent Mode",
+        icon="mdi:volume-off",
+        translation_key="silent_mode",
+    ), False),
+    (HonSwitchEntityDescription(
+        key="echoStatus",
+        name="Echo",
+        icon="mdi:account-voice",
+        translation_key="echo_status",
+    ), True),
+    (HonSwitchEntityDescription(
+        key="rapidMode",
+        name="Rapid Mode",
+        icon="mdi:car-turbocharger",
+        translation_key="rapid_mode",
+    ), False),
+    (HonSwitchEntityDescription(
+        key="10degreeHeatingStatus",
+        name="10° Heating",
+        icon="mdi:heat-wave",
+        translation_key="10_degree_heating",
+    ), False),
+    (HonSwitchEntityDescription(
+        key="ecoMode",
+        name="Eco Mode",
+        icon="mdi:sprout",
+        translation_key="eco_mode",
+    ), False),
+    (HonSwitchEntityDescription(
+        key="turboMode",
+        name="Turbo Mode",
+        icon="mdi:rocket-launch",
+        translation_key="turbo_mode",
+    ), False),
+    (HonSwitchEntityDescription(
+        key="healthMode",
+        name="Health Mode",
+        icon="mdi:heart",
+        translation_key="health_mode",
+    ), False),
+)
+
+
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
 
-    hon = hass.data[DOMAIN][entry.unique_id]
+    hon = hass.data[DOMAIN][entry.entry_id]
 
     appliances = []
     for appliance in hon.appliances:
         coordinator = await hon.async_get_coordinator(appliance)
         device = coordinator.device
 
-        if (("settings" in device.commands) 
-            and (device.get("silentSleepStatus", "N/A") != "N/A")):
+        if "settings" not in device.commands:
+            continue
 
-            description = HonSwitchEntityDescription(
-                key="silentSleepStatus",
-                name="Sleep Mode",
-                icon="mdi:bed",
-                translation_key="sleep_mode",
+        # Each description is gated on its own key: the previous code checked
+        # `ecoMode` for the turbo switch, which put a dead Turbo Mode entity on
+        # every appliance that supports Eco Mode.
+        for description, invert in SWITCH_DESCRIPTIONS:
+            if device.get(description.key) is None:
+                continue
+            appliances.append(
+                HonSwitchEntity(hass, coordinator, entry, appliance, description, invert)
             )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
-        if (("settings" in device.commands) 
-            and (device.get("screenDisplayStatus", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="screenDisplayStatus",
-                name="Screen Display",
-                icon="mdi:monitor-small",
-                translation_key="screen_display_status",
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
-
-        if (("settings" in device.commands) 
-            and (device.get("muteStatus", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="muteStatus",
-                name="Silent Mode",
-                icon="mdi:volume-off",
-                translation_key="silent_mode",
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
-
-        if (("settings" in device.commands) 
-            and (device.get("echoStatus", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="echoStatus",
-                name="Echo",
-                icon="mdi:account-voice",
-                translation_key="echo_status"
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description, True)])
-            await coordinator.async_request_refresh()
-
-
-        if (("settings" in device.commands) 
-            and (device.get("rapidMode", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="rapidMode",
-                name="Rapid Mode",
-                icon="mdi:car-turbocharger",
-                translation_key="rapid_mode",
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
-
-        if (("settings" in device.commands) 
-            and (device.get("10degreeHeatingStatus", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="10degreeHeatingStatus",
-                name="10° Heating",
-                icon="mdi:heat-wave",
-                translation_key="10_degree_heating",
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
-
-        if (("settings" in device.commands) 
-            and (device.get("ecoMode", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="ecoMode",
-                name="Eco Mode",
-                icon="mdi:sprout",
-                translation_key="eco_mode",
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
-        if (("settings" in device.commands) 
-            and (device.get("ecoMode", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="turboMode",
-                name="Turbo Mode",
-                icon="mdi:rocket-launch",
-                translation_key="turbo_mode",
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
-        if (("settings" in device.commands) 
-            and (device.get("healthMode", "N/A") != "N/A")):
-
-            description = HonSwitchEntityDescription(
-                key="healthMode",
-                name="Health Mode",
-                icon="mdi:heart",
-                translation_key="health_mode",
-            )
-            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
-            await coordinator.async_request_refresh()
-
 
     async_add_entities(appliances)
-
-
 
 
 class HonSwitchEntity(HonBaseSwitchEntity):
@@ -198,7 +152,7 @@ class HonSwitchEntity(HonBaseSwitchEntity):
 
         self._device.set(self.entity_description.key, value)
         self.async_write_ha_state()
-        self.coordinator.async_set_updated_data({})
+        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         setting = self._setting()
@@ -217,19 +171,16 @@ class HonSwitchEntity(HonBaseSwitchEntity):
 
         self._device.set(self.entity_description.key, value)
         self.async_write_ha_state()
-        self.coordinator.async_set_updated_data({})
+        await self.coordinator.async_request_refresh()
 
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
         if not super().available:
-            _LOGGER.warning("HonSwitchEntity not available: super() is not")
             return False
         if not self._device.get("remoteCtrValid", "1") == "1":
-            _LOGGER.warning("HonSwitchEntity not available: remoteCtrValid==1")
             return False
         if self._device.get("attributes.lastConnEvent.category") == "DISCONNECTED":
-            _LOGGER.warning("HonSwitchEntity not available: DISCONNECTED")
             return False
         
         setting = self._setting()
@@ -244,10 +195,6 @@ class HonSwitchEntity(HonBaseSwitchEntity):
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
-        #if( self._key == "screenDisplayStatus" ):
-        #    _LOGGER.warning(f"HonSwitchEntity screenDisplayStatus value {self._device.get(self._key)}" )
-        #if( self._key == "echoStatus" ):
-        #    _LOGGER.warning(f"HonSwitchEntity echoStatus value {self._device.get(self._key)}" )
         self._attr_is_on = self.is_on
         if update:
             self.async_write_ha_state()
