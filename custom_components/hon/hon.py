@@ -1,31 +1,21 @@
 import asyncio
 import logging
-import voluptuous as vol
-import aiohttp
-import asyncio
 import secrets
 import hashlib
 import base64
 import json
-import re
-import ast
 import time
-import urllib.parse
-from urllib.parse import quote
-from datetime import datetime, timezone, timedelta
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from datetime import datetime, timezone
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 _LOGGER = logging.getLogger(__name__)
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 
 
 from .const import (
-    DOMAIN,
     CONF_ID_TOKEN,
     CONF_COGNITO_TOKEN,
     CONF_REFRESH_TOKEN,
@@ -62,11 +52,15 @@ class HonConnection:
             self._cognitoToken = entry.data.get(CONF_COGNITO_TOKEN, "")
 
         self._start_time    = time.time()
+        self._auth_lock     = asyncio.Lock()
 
         self._header = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
         }
-        self._session = aiohttp.ClientSession(headers=self._header, connector=aiohttp.TCPConnector(ssl=False))
+        # Use Home Assistant's client session helper: it keeps TLS verification
+        # on (credentials and tokens travel over this connection) and hooks the
+        # session into HA's own connection pooling and shutdown handling.
+        self._session = async_create_clientsession(hass, headers=self._header)
         self._appliances = []
 
     async def async_close(self):
@@ -75,6 +69,11 @@ class HonConnection:
     @property
     def appliances(self):
         return self._appliances
+
+    @property
+    def coordinators(self):
+        """Coordinators owned by this connection, keyed by MAC address."""
+        return self._coordinator_dict
 
     async def async_get_existing_coordinator(self, mac):
         if mac in self._coordinator_dict:
@@ -91,9 +90,18 @@ class HonConnection:
 
 
     async def _ensure_session(self):
-        """Re-authenticate when the CIAM tokens are close to expiring (~15 min TTL)."""
-        if time.time() - self._start_time > SESSION_TIMEOUT:
-            await self.async_authorize()
+        """Re-authenticate when the CIAM tokens are close to expiring (~15 min TTL).
+
+        Every coordinator polls on its own schedule, so without the lock a
+        multi-appliance account fires one full login per appliance the moment the
+        token ages out. The second check inside the lock lets the tasks that
+        queued behind the winner reuse the tokens it just fetched.
+        """
+        if time.time() - self._start_time <= SESSION_TIMEOUT:
+            return
+        async with self._auth_lock:
+            if time.time() - self._start_time > SESSION_TIMEOUT:
+                await self.async_authorize()
 
     async def async_authorize(self):
         """Authenticate against the hOn CIAM endpoint and load the appliances.
@@ -117,7 +125,7 @@ class HonConnection:
         }
         async with self._session.get(f"{API_URL}/ciam/authorize", params=params) as resp:
             if resp.status != 200:
-                _LOGGER.error("Unable to connect to the CIAM authorize service: " + str(resp.status))
+                _LOGGER.error("Unable to connect to the CIAM authorize service: %s", resp.status)
                 return False
             session_id = (await resp.json()).get("session_id")
             if not session_id:
@@ -135,7 +143,7 @@ class HonConnection:
                 self._id_token = tokens["id_token"]
                 self._refresh_token = tokens.get("refresh_token", "")
             except (KeyError, TypeError):
-                _LOGGER.error("Unable to get tokens from /ciam/token. Response: " + await resp.text())
+                _LOGGER.error("Unable to get tokens from /ciam/token. Response: %s", await resp.text())
                 return False
 
         # 3) Load the appliance list from the unified-api view
@@ -145,22 +153,33 @@ class HonConnection:
                 json_data = await resp.json()
                 self._appliances = json_data["modules"]["applianceList"]["payload"]["appliances"]
             except (KeyError, TypeError):
-                _LOGGER.error("hOn Invalid Data [" + (await resp.text())[:500] + "] after POST [" + url + "]")
+                _LOGGER.error("hOn Invalid Data [%s] after POST [%s]", (await resp.text())[:500], url)
                 return False
 
             _LOGGER.debug(f"All appliances: {self._appliances}")
 
-            # Keep only appliances that expose a MAC address and a type id
-            self._appliances = [
-                appliance for appliance in self._appliances
-                if "macAddress" in appliance and "applianceTypeId" in appliance
-            ]
+            # Keep only appliances carrying the fields every entity needs to
+            # identify itself; a partial payload would otherwise take the whole
+            # account down when the coordinator is built.
+            required = ("macAddress", "applianceTypeId", "applianceTypeName")
+            usable, skipped = [], []
+            for appliance in self._appliances:
+                if all(field in appliance for field in required):
+                    usable.append(appliance)
+                else:
+                    skipped.append(appliance)
+            if skipped:
+                _LOGGER.warning("Ignoring %s appliance(s) with incomplete data: %s",
+                                len(skipped), skipped)
+            self._appliances = usable
 
         self._start_time = time.time()
         return True
 
 
     async def load_commands(self, appliance):
+        await self._ensure_session()
+
         params = {
             "applianceType": appliance["applianceTypeId"],
             "code": appliance["code"],
@@ -197,6 +216,8 @@ class HonConnection:
             return data.get("payload", {})
 
     async def load_statistics(self, device):
+        await self._ensure_session()
+
         params = {
             "macAddress": device.mac_address,
             "applianceType": device.appliance_type
@@ -261,7 +282,7 @@ class HonConnection:
 
         await self._ensure_session()
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         command = {
             "macAddress": device.mac_address,
             "timestamp": f"{now[:-3]}Z",
@@ -307,6 +328,9 @@ class HonConnection:
         return None
 
 def get_hOn_mac(device_id, hass):
-    device_registry = dr.async_get(hass)
-    device = device_registry.async_get(device_id)
+    """Return the MAC address the device registry holds for `device_id`."""
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None or not device.identifiers:
+        _LOGGER.error("Unknown device_id: %s", device_id)
+        return None
     return next(iter(device.identifiers))[1]

@@ -12,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
 
-    hon = hass.data[DOMAIN][entry.unique_id]
+    hon = hass.data[DOMAIN][entry.entry_id]
 
     appliances = []
     for appliance in hon.appliances:

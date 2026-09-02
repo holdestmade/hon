@@ -9,15 +9,11 @@ from typing import Any
 from homeassistant import config_entries
 
 from homeassistant.config_entries import (
-    SOURCE_REAUTH,
-    SOURCE_RECONFIGURE,
-    ConfigFlow,
     ConfigFlowResult,
     CONN_CLASS_LOCAL_POLL,
 )
 
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
-from homeassistant.core import callback
 
 from .const import DOMAIN, CONF_ID_TOKEN, CONF_FRAMEWORK, CONF_COGNITO_TOKEN, CONF_REFRESH_TOKEN
 
@@ -49,7 +45,7 @@ class HonFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
 
         # Test connection
-        hon = HonConnection(None, None, self._email, self._password)
+        hon = HonConnection(self.hass, None, self._email, self._password)
         try:
             auth_ok = await hon.async_authorize()
         except aiohttp.ClientConnectorError:
@@ -94,7 +90,7 @@ class HonFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             config_entry = self.hass.config_entries.async_get_entry(entry_id)
                 
             # Test connection
-            hon = HonConnection(None, None, config_entry.unique_id, user_input[CONF_PASSWORD])
+            hon = HonConnection(self.hass, None, config_entry.unique_id, user_input[CONF_PASSWORD])
             try:
                 auth_ok = await hon.async_authorize()
             except aiohttp.ClientConnectorError:

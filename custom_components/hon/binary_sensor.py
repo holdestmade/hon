@@ -1,20 +1,11 @@
 import logging
-import asyncio
-import json
-from datetime import datetime, timedelta, timezone
-from dateutil.tz import gettz
-from typing import Optional
-from enum import IntEnum
 
-from .const import DOMAIN, APPLIANCE_TYPE
-from .base import HonBaseCoordinator, HonBaseBinarySensorEntity
+from .const import DOMAIN
+from .base import HonBaseBinarySensorEntity
 
-from homeassistant.core import callback
-from homeassistant.helpers import entity_platform
 from homeassistant.config_entries import ConfigEntry
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorEntity,
     BinarySensorDeviceClass,
 )
 
@@ -22,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
 
-    hon = hass.data[DOMAIN][entry.unique_id]
+    hon = hass.data[DOMAIN][entry.entry_id]
 
     appliances = []
     for appliance in hon.appliances:
@@ -168,7 +159,6 @@ class HonBaseChildLockStatus(HonBaseBinarySensorEntity):
     def __init__(self, hass, coordinator, entry, appliance) -> None:
         super().__init__(coordinator, appliance, "lockStatus", "Child lock")
 
-        translation_key = "lockStatus"
         self._attr_device_class = BinarySensorDeviceClass.LOCK
 
     def coordinator_update(self):
