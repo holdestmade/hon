@@ -6,7 +6,7 @@ import base64
 import json
 import time
 from datetime import datetime, timezone
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +33,13 @@ SESSION_TIMEOUT     = 600 # seconds
 # one full credential submission per coordinator poll (every 60s, indefinitely),
 # which is both useless and a good way to get an account rate-limited.
 AUTH_RETRY_BACKOFF  = (60, 120, 300, 600, 900) # seconds
+
+# Sent on every request. The shared Home Assistant session supplies its own
+# User-Agent default, so ours has to be passed per request to override it.
+BASE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
+}
 
 from .base import HonBaseCoordinator
 
@@ -61,17 +68,12 @@ class HonConnection:
         self._auth_failures     = 0
         self._next_auth_attempt = 0.0
 
-        self._header = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36"
-        }
-        # Use Home Assistant's client session helper: it keeps TLS verification
-        # on (credentials and tokens travel over this connection) and hooks the
-        # session into HA's own connection pooling and shutdown handling.
-        self._session = async_create_clientsession(hass, headers=self._header)
+        # Home Assistant's shared session: TLS verification stays on (credentials
+        # and tokens travel over this connection) and HA owns its lifecycle. It
+        # must never be closed by us, and using it avoids leaking a session per
+        # config-entry reload and per login attempt in the config flow.
+        self._session = async_get_clientsession(hass)
         self._appliances = []
-
-    async def async_close(self):
-        await self._session.close()
 
     @property
     def appliances(self):
@@ -153,7 +155,8 @@ class HonConnection:
             "password": self._password,
             "code_challenge": code_challenge,
         }
-        async with self._session.get(f"{API_URL}/ciam/authorize", params=params) as resp:
+        async with self._session.get(f"{API_URL}/ciam/authorize", params=params,
+                                     headers=BASE_HEADERS) as resp:
             if resp.status != 200:
                 _LOGGER.error("Unable to connect to the CIAM authorize service: %s", resp.status)
                 return self._auth_failed()
@@ -165,6 +168,7 @@ class HonConnection:
         # 2) Exchange the session id (+ PKCE verifier) for the tokens
         async with self._session.post(
             f"{API_URL}/ciam/token",
+            headers=BASE_HEADERS,
             json={"session_id": session_id, "code_verifier": code_verifier},
         ) as resp:
             try:
@@ -283,6 +287,7 @@ class HonConnection:
     @property
     def _headers(self):
         return {
+            **BASE_HEADERS,
             "Content-Type": "application/json",
             "cognito-token": self._cognitoToken,
             "id-token": self._id_token,
