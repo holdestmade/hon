@@ -1,10 +1,10 @@
 {
   "domain": "hon",
   "name": "hOn",
-  "codeowners": ["@gvigroux"],
+  "codeowners": ["@holdestmade"],
   "config_flow": true,
-  "documentation": "https://github.com/gvigroux/hon",
+  "documentation": "https://github.com/holdestmade/hon",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/gvigroux/hon/issues",
-  "version": "0.8.4"
+  "issue_tracker": "https://github.com/holdestmade/hon/issues",
+  "version": "0.9.1"
 }
