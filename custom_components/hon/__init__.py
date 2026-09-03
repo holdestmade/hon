@@ -423,9 +423,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not unload_ok:
         return False
 
-    hon = hass.data[DOMAIN].pop(entry.entry_id, None)
-    if hon is not None:
-        await hon.async_close()
+    # The connection holds no resources of its own: it borrows Home Assistant's
+    # shared aiohttp session, which HA owns and closes.
+    hass.data[DOMAIN].pop(entry.entry_id, None)
 
     remaining_entries = [
         key for key in hass.data.get(DOMAIN, {}) if key != SERVICE_REGISTRY

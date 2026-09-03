@@ -50,7 +50,6 @@ class HonFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             auth_ok = await hon.async_authorize()
         except aiohttp.ClientConnectorError:
             auth_ok = False
-        await hon.async_close()
         if not auth_ok:
             errors["base"] = "auth_error"
             return self.async_show_form(step_id="user",data_schema=vol.Schema({vol.Required(CONF_EMAIL): str,vol.Required(CONF_PASSWORD): str}), errors=errors)
@@ -95,7 +94,6 @@ class HonFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 auth_ok = await hon.async_authorize()
             except aiohttp.ClientConnectorError:
                 auth_ok = False
-            await hon.async_close()
             if not auth_ok:
                 errors = {}
                 errors["base"] = "auth_error"
