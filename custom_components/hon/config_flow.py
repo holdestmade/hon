@@ -8,10 +8,7 @@ from typing import Any
 
 from homeassistant import config_entries
 
-from homeassistant.config_entries import (
-    ConfigFlowResult,
-    CONN_CLASS_LOCAL_POLL,
-)
+from homeassistant.config_entries import ConfigFlowResult
 
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 
@@ -24,7 +21,6 @@ class HonFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow."""
 
     VERSION = 1
-    CONNECTION_CLASS = CONN_CLASS_LOCAL_POLL
 
     def __init__(self):
         self._email     = None
